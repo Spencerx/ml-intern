@@ -28,7 +28,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies into /app/.venv
 # Use --frozen to ensure exact versions from uv.lock
-RUN uv sync --extra agent --no-dev --frozen
+RUN uv sync --no-dev --frozen
 
 # Copy application code
 COPY agent/ ./agent/
