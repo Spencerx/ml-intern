@@ -21,38 +21,60 @@ hf_oauth_scopes:
 
 An MLE agent CLI with MCP (Model Context Protocol) integration and built-in tool support.
 
-
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone git@github.com:huggingface/hf_agent.git
 cd hf_agent
+uv sync
+uv tool install -e .
 ```
 
-#### Install recommended dependencies
+Create a `.env` file in the project root (or export these in your shell):
+
 ```bash
-uv sync --extra agent # or uv sync --extra all
+ANTHROPIC_API_KEY=<your-anthropic-api-key> # if using anthropic models
+HF_TOKEN=<your-hugging-face-token>
+GITHUB_TOKEN=<github-personal-access-token>
+HF_NAMESPACE=<your-hf-namespace>
 ```
 
-### Interactive CLI
+If no `HF_TOKEN` is set, the CLI will prompt you to paste one on first launch.
+
+#### That's it. Now `ml-agent` works from any directory:
+
+```bash
+ml-agent
+```
+
+### Usage
+
+**Interactive mode** (start a chat session):
+
+```bash
+ml-agent
+```
+
+**Headless mode** (single prompt, auto-approve):
+
+```bash
+ml-agent "fine-tune llama on my dataset"
+```
+
+**Options:**
+
+```bash
+ml-agent --model anthropic/claude-opus-4-6 "your prompt"
+ml-agent --max-iterations 100 "your prompt"
+ml-agent --no-stream "your prompt"
+```
+
+If you haven't installed globally, you can still run from the project directory:
 
 ```bash
 uv run python -m agent.main
-```
-This starts an interactive chat session with the agent. Type your messages and the agent will respond, using tools as needed.
-
-The agent will automatically discover and register all tools from configured MCP servers.
-
-
-### Env Setup
-```bash
-ANTHROPIC_API_KEY=<one-key-to-rule-them-all>
-HF_TOKEN=<hf-token-to-access-the-hub>
-GITHUB_TOKEN=<gh-pat-key-for-not-reinventing-the-wheel>
-HF_NAMESPACE=<hf-namespace-to-use>
 ```
 
 ## Architecture
@@ -63,60 +85,68 @@ HF_NAMESPACE=<hf-namespace-to-use>
 ┌─────────────────────────────────────────────────────────────┐
 │                         User/CLI                             │
 └────────────┬─────────────────────────────────────┬───────────┘
-             │ User request                                │ Events
-             ↓                                             ↑
-      submission_queue                                   event_queue
-             │                                                 │
-             ↓                                                 │
-┌────────────────────────────────────────────────────┐         │
-│            submission_loop (agent_loop.py)         │         │
-│  ┌──────────────────────────────────────────────┐  │         │
-│  │  1. Receive Operation from queue             │  │         │
-│  │  2. Route to Handler (run_agent/compact/...) │  │         │
-│  └──────────────────────────────────────────────┘  │         │
-│                      ↓                             │         │
-│  ┌──────────────────────────────────────────────┐  │         │
-│  │         Handlers.run_agent()                 │  ├─────────┤
-│  │                                              │  │ Emit    │
-│  │  ┌────────────────────────────────────────┐  │  │ Events  │
-│  │  │  Agentic Loop (max 10 iterations)      │  │  │         │
-│  │  │                                        │  │  │         │
-│  │  │  ┌──────────────────────────────────┐  │  │  │         │
-│  │  │  │ Session                          │  │  │  │         │
-│  │  │  │  ┌────────────────────────────┐  │  │  │  │         │
-│  │  │  │  │ ContextManager             │  │  │  │  │         │
-│  │  │  │  │ • Message history          │  │  │  │  │         │
-│  │  │  │  │   (litellm.Message[])      │  │  │  │  │         │
-│  │  │  │  │ • Auto-compaction (180k)   │  │  │  │  │         │
-│  │  │  │  └────────────────────────────┘  │  │  │  │         │
-│  │  │  │                                  │  │  │  │         │
-│  │  │  │  ┌────────────────────────────┐  │  │  │  │         │
-│  │  │  │  │ ToolRouter                 │  │  │  │  │         │
-│  │  │  │  │  ├─ explore_hf_docs        │  │  │  │  │         │
-│  │  │  │  │  ├─ fetch_hf_docs          │  │  │  │  │         │
-│  │  │  │  │  ├─ find_hf_api            │  │  │  │  │         │
-│  │  │  │  │  ├─ plan_tool              │  │  │  │  │         │
-│  │  │  │  │  ├─ hf_jobs*               │  │  │  │  │         │
-│  │  │  │  │  ├─ hf_private_repos*      │  │  │  │  │         │
-│  │  │  │  │  ├─ github_* (3 tools)     │  │  │  │  │         │
-│  │  │  │  │  └─ MCP tools (e.g.,       │  │  │  │  │         │
-│  │  │  │  │      model_search, etc.)   │  │  │  │  │         │
-│  │  │  │  └────────────────────────────┘  │  │  │  │         │
-│  │  │  └──────────────────────────────────┘  │  │  │         │
-│  │  │                                        │  │  │         │
-│  │  │  Loop:                                 │  │  │         │
-│  │  │    1. LLM call (litellm.acompletion)   │  │  │         │
-│  │  │       ↓                                │  │  │         │
-│  │  │    2. Parse tool_calls[]               │  │  │         │
-│  │  │       ↓                                │  │  │         │
-│  │  │    3. Execute via ToolRouter           │  │  │         │
-│  │  │       ↓                                │  │  │         │
-│  │  │    4. Add results to ContextManager    │  │  │         │
-│  │  │       ↓                                │  │  │         │
-│  │  │    5. Repeat if tool_calls exist       │  │  │         │
-│  │  └────────────────────────────────────────┘  │  │         │
-│  └──────────────────────────────────────────────┘  │         │
-└────────────────────────────────────────────────────┴─────────┘
+             │ Operations                          │ Events
+             ↓ (user_input, exec_approval,         ↑
+      submission_queue  interrupt, compact, ...)  event_queue
+             │                                         │
+             ↓                                         │
+┌────────────────────────────────────────────────────┐  │
+│            submission_loop (agent_loop.py)         │  │
+│  ┌──────────────────────────────────────────────┐  │  │
+│  │  1. Receive Operation from queue             │  │  │
+│  │  2. Route to handler (run_agent/compact/...) │  │  │
+│  └──────────────────────────────────────────────┘  │  │
+│                      ↓                             │  │
+│  ┌──────────────────────────────────────────────┐  │  │
+│  │         Handlers.run_agent()                 │  ├──┤
+│  │                                              │  │  │
+│  │  ┌────────────────────────────────────────┐  │  │  │
+│  │  │  Agentic Loop (max 300 iterations)     │  │  │  │
+│  │  │                                        │  │  │  │
+│  │  │  ┌──────────────────────────────────┐  │  │  │  │
+│  │  │  │ Session                          │  │  │  │  │
+│  │  │  │  ┌────────────────────────────┐  │  │  │  │  │
+│  │  │  │  │ ContextManager             │  │  │  │  │  │
+│  │  │  │  │ • Message history          │  │  │  │  │  │
+│  │  │  │  │   (litellm.Message[])      │  │  │  │  │  │
+│  │  │  │  │ • Auto-compaction (170k)   │  │  │  │  │  │
+│  │  │  │  │ • Session upload to HF     │  │  │  │  │  │
+│  │  │  │  └────────────────────────────┘  │  │  │  │  │
+│  │  │  │                                  │  │  │  │  │
+│  │  │  │  ┌────────────────────────────┐  │  │  │  │  │
+│  │  │  │  │ ToolRouter                 │  │  │  │  │  │
+│  │  │  │  │  ├─ HF docs & research     │  │  │  │  │  │
+│  │  │  │  │  ├─ HF repos, datasets,    │  │  │  │  │  │
+│  │  │  │  │  │  jobs, papers            │  │  │  │  │  │
+│  │  │  │  │  ├─ GitHub code search      │  │  │  │  │  │
+│  │  │  │  │  ├─ Sandbox & local tools   │  │  │  │  │  │
+│  │  │  │  │  ├─ Planning                │  │  │  │  │  │
+│  │  │  │  │  └─ MCP server tools        │  │  │  │  │  │
+│  │  │  │  └────────────────────────────┘  │  │  │  │  │
+│  │  │  └──────────────────────────────────┘  │  │  │  │
+│  │  │                                        │  │  │  │
+│  │  │  ┌──────────────────────────────────┐  │  │  │  │
+│  │  │  │ Doom Loop Detector               │  │  │  │  │
+│  │  │  │ • Detects repeated tool patterns │  │  │  │  │
+│  │  │  │ • Injects corrective prompts     │  │  │  │  │
+│  │  │  └──────────────────────────────────┘  │  │  │  │
+│  │  │                                        │  │  │  │
+│  │  │  Loop:                                 │  │  │  │
+│  │  │    1. LLM call (litellm.acompletion)   │  │  │  │
+│  │  │       ↓                                │  │  │  │
+│  │  │    2. Parse tool_calls[]               │  │  │  │
+│  │  │       ↓                                │  │  │  │
+│  │  │    3. Approval check                   │  │  │  │
+│  │  │       (jobs, sandbox, destructive ops) │  │  │  │
+│  │  │       ↓                                │  │  │  │
+│  │  │    4. Execute via ToolRouter           │  │  │  │
+│  │  │       ↓                                │  │  │  │
+│  │  │    5. Add results to ContextManager    │  │  │  │
+│  │  │       ↓                                │  │  │  │
+│  │  │    6. Repeat if tool_calls exist       │  │  │  │
+│  │  └────────────────────────────────────────┘  │  │  │
+│  └──────────────────────────────────────────────┘  │  │
+└────────────────────────────────────────────────────┴──┘
 ```
 
 ### Agentic Loop Flow
@@ -126,61 +156,48 @@ User Message
      ↓
 [Add to ContextManager]
      ↓
-     ╔═══════════════════════════════════════╗
-     ║      Iteration Loop (max 10)          ║
-     ║                                       ║
-     ║  Get messages + tool specs            ║
-     ║         ↓                             ║
-     ║  litellm.acompletion()                ║
-     ║         ↓                             ║
-     ║  Has tool_calls? ──No──> Done         ║
-     ║         │                             ║
-     ║        Yes                            ║
-     ║         ↓                             ║
-     ║  Add assistant msg (with tool_calls)  ║
-     ║         ↓                             ║
-     ║  For each tool_call:                  ║
-     ║    • ToolRouter.execute_tool()        ║
-     ║    • Add result to ContextManager     ║
-     ║         ↓                             ║
-     ║  Continue loop ─────────────────┐     ║
-     ║         ↑                       │     ║
-     ╚═════════╧═══════════════════════╧═════╝
+     ╔═══════════════════════════════════════════╗
+     ║      Iteration Loop (max 300)             ║
+     ║                                           ║
+     ║  Get messages + tool specs                ║
+     ║         ↓                                 ║
+     ║  litellm.acompletion()                    ║
+     ║         ↓                                 ║
+     ║  Has tool_calls? ──No──> Done             ║
+     ║         │                                 ║
+     ║        Yes                                ║
+     ║         ↓                                 ║
+     ║  Add assistant msg (with tool_calls)      ║
+     ║         ↓                                 ║
+     ║  Doom loop check                          ║
+     ║         ↓                                 ║
+     ║  For each tool_call:                      ║
+     ║    • Needs approval? ──Yes──> Wait for    ║
+     ║    │                         user confirm ║
+     ║    No                                     ║
+     ║    ↓                                      ║
+     ║    • ToolRouter.execute_tool()            ║
+     ║    • Add result to ContextManager         ║
+     ║         ↓                                 ║
+     ║  Continue loop ─────────────────┐         ║
+     ║         ↑                       │         ║
+     ╚═════════╧═══════════════════════╧═════════╝
 ```
-
-## Project Structure
-
-```
-agent/
-├── config.py                 # Configuration models
-├── main.py                   # Interactive CLI entry point
-├── prompts/
-│   └── system_prompt.yaml   # Agent behavior and personality
-├── context_manager/
-│   └── manager.py           # Message history & auto-compaction
-└── core/
-    ├── agent_loop.py        # Main agent loop and handlers
-    ├── session.py           # Session management
-    ├── mcp_client.py        # MCP SDK integration
-    └── tools.py             # ToolRouter and built-in tools
-
-configs/
-└── main_agent_config.json   # Model and MCP server configuration
-
-tests/                       # Integration and unit tests
-eval/                        # Evaluation suite (see eval/README.md)
-```
-
 
 ## Events
 
 The agent emits the following events via `event_queue`:
 
 - `processing` - Starting to process user input
-- `assistant_message` - LLM response text
+- `ready` - Agent is ready for input
+- `assistant_chunk` - Streaming token chunk
+- `assistant_message` - Complete LLM response text
+- `assistant_stream_end` - Token stream finished
 - `tool_call` - Tool being called with arguments
 - `tool_output` - Tool execution result
-- `approval_request` - Requesting user approval for sensitive operations
+- `tool_log` - Informational tool log message
+- `tool_state_change` - Tool execution state transition
+- `approval_required` - Requesting user approval for sensitive operations
 - `turn_complete` - Agent finished processing
 - `error` - Error occurred during processing
 - `interrupted` - Agent was interrupted

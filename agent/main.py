@@ -1026,7 +1026,8 @@ async def headless_main(
         await tool_router.__aexit__(None, None, None)
 
 
-if __name__ == "__main__":
+def cli():
+    """Entry point for the ml-agent CLI command."""
     import logging as _logging
     import warnings
     # Suppress aiohttp "Unclosed client session" noise during event loop teardown
@@ -1053,3 +1054,7 @@ if __name__ == "__main__":
             asyncio.run(main())
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
+
+
+if __name__ == "__main__":
+    cli()

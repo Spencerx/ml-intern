@@ -1,9 +1,13 @@
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, Union
 
 from dotenv import load_dotenv
+
+# Project root: two levels up from this file (agent/config.py -> project root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 from fastmcp.mcp_config import (
     RemoteMCPServer,
     StdioMCPServer,
@@ -74,8 +78,10 @@ def load_config(config_path: str = "config.json") -> Config:
     Use ${VAR_NAME} in your JSON for any secret.
     Automatically loads from .env file.
     """
-    # Load environment variables from .env file
-    load_dotenv()
+    # Load .env from project root first (so it works from any directory),
+    # then CWD .env can override if present
+    load_dotenv(_PROJECT_ROOT / ".env")
+    load_dotenv(override=False)
 
     with open(config_path, "r") as f:
         raw_config = json.load(f)
