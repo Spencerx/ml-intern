@@ -33,6 +33,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agent.core.prompt_caching import (  # noqa: E402
+    with_prompt_cache_params,
+    with_prompt_caching,
+)
+
 GITHUB_API = "https://api.github.com"
 DEFAULT_GITHUB_REPO = "huggingface/ml-intern"
 DEFAULT_HF_SPACE = "smolagents/ml-intern"
@@ -1297,10 +1302,12 @@ async def _call_json_llm(
         completion_func = acompletion
 
     attempt_messages = list(messages)
+    llm_params = with_prompt_cache_params(llm_params)
     last_error: Exception | None = None
     for attempt in range(retries + 1):
+        cached_messages, _ = with_prompt_caching(attempt_messages, None, llm_params)
         response = await completion_func(
-            messages=attempt_messages,
+            messages=cached_messages,
             max_completion_tokens=max_completion_tokens,
             temperature=_temperature_for_params(llm_params),
             **llm_params,
